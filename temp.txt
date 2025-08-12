@@ -38,7 +38,7 @@ tomcat-localhost-2024.12.08    # 로컬호스트 로그
 
 ```powershell
 # PowerShell 관리자 권한
-$version = "8.11.1"
+$version = "9.1.1"  # Filebeat 9.x 최신 버전
 $url = "https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-$version-windows-x86_64.zip"
 $output = "$env:TEMP\filebeat.zip"
 
@@ -48,7 +48,17 @@ Expand-Archive -Path $output -DestinationPath "C:\Program Files\" -Force
 Rename-Item "C:\Program Files\filebeat-$version-windows-x86_64" "C:\Program Files\Filebeat" -Force
 
 cd "C:\Program Files\Filebeat"
+
+# 데이터 디렉토리 생성 (filestream 필수)
+New-Item -ItemType Directory -Path "C:\ProgramData\filebeat\data" -Force
+New-Item -ItemType Directory -Path "C:\ProgramData\filebeat\logs" -Force
+New-Item -ItemType Directory -Path "C:\ProgramData\filebeat\registry\filestream" -Force
+
+# 서비스 설치
 .\install-service-filebeat.ps1
+
+# 권한 설정
+icacls "C:\ProgramData\filebeat" /grant "NT SERVICE\filebeat:(OI)(CI)F" /T
 ```
 
 ### 2.2 filebeat.yml 전체 설정
@@ -60,7 +70,8 @@ cd "C:\Program Files\Filebeat"
 filebeat.inputs:
 
 # ------------ Catalina 메인 로그 ------------
-- type: log
+- type: filestream
+  id: tomcat-catalina
   enabled: true
   paths:
     - 'C:\Program Files\Apache Software Foundation\Tomcat 9.0\logs\catalina.*.log'
@@ -68,18 +79,33 @@ filebeat.inputs:
   # 파일 인코딩
   encoding: utf-8
   
-  # 멀티라인 처리 (스택트레이스)
-  multiline.pattern: '^\d{2}-[A-Za-z]{3}-\d{4}\s+\d{2}:\d{2}:\d{2}'
-  multiline.negate: true
-  multiline.match: after
-  multiline.max_lines: 1000
+  # 파서 설정 (9.x 형식)
+  parsers:
+    - multiline:
+        type: pattern
+        pattern: '^\d{2}-[A-Za-z]{3}-\d{4}\s+\d{2}:\d{2}:\d{2}'
+        negate: true
+        match: after
+        max_lines: 1000
+        timeout: 5s
   
-  # 파일 관리
-  close_inactive: 5m
-  close_renamed: true
-  close_removed: true
-  clean_removed: true
-  scan_frequency: 10s
+  # 파일 관리 (9.x)
+  prospector:
+    scanner:
+      check_interval: 10s
+      fingerprint:
+        enabled: false
+  
+  file_identity:
+    native: ~
+    
+  close:
+    on_state_change:
+      inactive: 5m
+      removed: true
+      renamed: true
+  
+  clean_inactive: 72h
   ignore_older: 72h
   
   # 메타데이터
@@ -87,13 +113,18 @@ filebeat.inputs:
     log_type: catalina
     service: tomcat
     environment: production
-    server_name: ${COMPUTERNAME}
   fields_under_root: false
   
   tags: ["tomcat", "catalina", "windows"]
+  
+  # 백프레셔 설정
+  backoff:
+    init: 1s
+    max: 10s
 
 # ------------ STDERR 로그 (에러 출력) ------------
-- type: log
+- type: filestream
+  id: tomcat-stderr
   enabled: true
   paths:
     - 'C:\Program Files\Apache Software Foundation\Tomcat 9.0\logs\tomcat9-stderr.*.log'
@@ -101,10 +132,21 @@ filebeat.inputs:
   encoding: utf-8
   
   # Java 예외 처리
-  multiline.pattern: '^\d{4}-\d{2}-\d{2}|^[A-Z][a-z]{2}\s+\d{2},\s+\d{4}|^\s+at\s+|^Caused by:|^\s+\.\.\.'
-  multiline.negate: false
-  multiline.match: after
-  multiline.max_lines: 500
+  parsers:
+    - multiline:
+        type: pattern
+        pattern: '^\d{4}-\d{2}-\d{2}|^[A-Z][a-z]{2}\s+\d{2},\s+\d{4}|^\s+at\s+|^Caused by:|^\s+\.\.\.'
+        negate: false
+        match: after
+        max_lines: 500
+        timeout: 5s
+  
+  file_identity:
+    native: ~
+    
+  close:
+    on_state_change:
+      inactive: 5m
   
   fields:
     log_type: stderr
@@ -114,17 +156,26 @@ filebeat.inputs:
   tags: ["tomcat", "stderr", "error", "windows"]
 
 # ------------ STDOUT 로그 (표준 출력) ------------
-- type: log
+- type: filestream
+  id: tomcat-stdout
   enabled: true
   paths:
     - 'C:\Program Files\Apache Software Foundation\Tomcat 9.0\logs\tomcat9-stdout.*.log'
   
   encoding: utf-8
   
-  multiline.pattern: '^\d{4}-\d{2}-\d{2}|^[A-Z][a-z]{2}\s+\d{2},\s+\d{4}'
-  multiline.negate: true
-  multiline.match: after
+  parsers:
+    - multiline:
+        type: pattern
+        pattern: '^\d{4}-\d{2}-\d{2}|^[A-Z][a-z]{2}\s+\d{2},\s+\d{4}'
+        negate: true
+        match: after
+        max_lines: 500
+        timeout: 5s
   
+  file_identity:
+    native: ~
+    
   fields:
     log_type: stdout
     service: tomcat
@@ -133,14 +184,18 @@ filebeat.inputs:
   tags: ["tomcat", "stdout", "windows"]
 
 # ------------ Access 로그 ------------
-- type: log
+- type: filestream
+  id: tomcat-access
   enabled: true
   paths:
     - 'C:\Program Files\Apache Software Foundation\Tomcat 9.0\logs\localhost_access_log.*.txt'
   
   encoding: utf-8
   
-  # Access 로그는 단일 라인
+  # Access 로그는 단일 라인이므로 파서 불필요
+  file_identity:
+    native: ~
+    
   fields:
     log_type: access
     service: tomcat
@@ -149,17 +204,26 @@ filebeat.inputs:
   tags: ["tomcat", "access", "http", "windows"]
 
 # ------------ Localhost 로그 ------------
-- type: log
+- type: filestream
+  id: tomcat-localhost
   enabled: true
   paths:
     - 'C:\Program Files\Apache Software Foundation\Tomcat 9.0\logs\localhost.*.log'
   
   encoding: utf-8
   
-  multiline.pattern: '^\d{2}-[A-Za-z]{3}-\d{4}'
-  multiline.negate: true
-  multiline.match: after
+  parsers:
+    - multiline:
+        type: pattern
+        pattern: '^\d{2}-[A-Za-z]{3}-\d{4}'
+        negate: true
+        match: after
+        max_lines: 500
+        timeout: 5s
   
+  file_identity:
+    native: ~
+    
   fields:
     log_type: localhost
     service: tomcat
@@ -168,18 +232,26 @@ filebeat.inputs:
   tags: ["tomcat", "localhost", "windows"]
 
 # ------------ Manager 로그 ------------
-- type: log
+- type: filestream
+  id: tomcat-manager
   enabled: true
   paths:
     - 'C:\Program Files\Apache Software Foundation\Tomcat 9.0\logs\manager.*.log'
   
   encoding: utf-8
   
-  multiline.type: pattern
-  multiline.pattern: '^\d{2}-[A-Za-z]{3}-\d{4}'
-  multiline.negate: true
-  multiline.match: after
+  parsers:
+    - multiline:
+        type: pattern
+        pattern: '^\d{2}-[A-Za-z]{3}-\d{4}'
+        negate: true
+        match: after
+        max_lines: 500
+        timeout: 5s
   
+  file_identity:
+    native: ~
+    
   fields:
     log_type: manager
     service: tomcat
@@ -188,18 +260,26 @@ filebeat.inputs:
   tags: ["tomcat", "manager", "windows"]
 
 # ------------ Host Manager 로그 ------------
-- type: log
+- type: filestream
+  id: tomcat-host-manager
   enabled: true
   paths:
     - 'C:\Program Files\Apache Software Foundation\Tomcat 9.0\logs\host-manager.*.log'
   
   encoding: utf-8
   
-  multiline.type: pattern
-  multiline.pattern: '^\d{2}-[A-Za-z]{3}-\d{4}'
-  multiline.negate: true
-  multiline.match: after
+  parsers:
+    - multiline:
+        type: pattern
+        pattern: '^\d{2}-[A-Za-z]{3}-\d{4}'
+        negate: true
+        match: after
+        max_lines: 500
+        timeout: 5s
   
+  file_identity:
+    native: ~
+    
   fields:
     log_type: host-manager
     service: tomcat
@@ -211,22 +291,19 @@ filebeat.inputs:
 processors:
   # 호스트 메타데이터 추가
   - add_host_metadata:
-      when.not.contains.tags: forwarded
+      when.not.contains:
+        tags: forwarded
   
-  # 타임스탬프 추가
-  - timestamp:
-      field: '@timestamp'
-      layouts:
-        - '2006-01-02T15:04:05Z'
-        - '2006-01-02T15:04:05.000Z'
-  
-  # 로그 레벨 추출 (JavaScript 대신 조건부 필드 사용)
   # ERROR 레벨 감지
   - add_fields:
-      when.or:
-        - contains.message: "ERROR"
-        - contains.message: "SEVERE"
-        - contains.message: "FATAL"
+      when:
+        or:
+          - contains:
+              message: "ERROR"
+          - contains:
+              message: "SEVERE"
+          - contains:
+              message: "FATAL"
       target: ''
       fields:
         log.level: "ERROR"
@@ -235,9 +312,12 @@ processors:
   
   # WARN 레벨 감지
   - add_fields:
-      when.or:
-        - contains.message: "WARN"
-        - contains.message: "WARNING"
+      when:
+        or:
+          - contains:
+              message: "WARN"
+          - contains:
+              message: "WARNING"
       target: ''
       fields:
         log.level: "WARN"
@@ -245,7 +325,9 @@ processors:
   
   # INFO 레벨 감지
   - add_fields:
-      when.contains.message: "INFO"
+      when:
+        contains:
+          message: "INFO"
       target: ''
       fields:
         log.level: "INFO"
@@ -253,10 +335,14 @@ processors:
   
   # DEBUG 레벨 감지
   - add_fields:
-      when.or:
-        - contains.message: "DEBUG"
-        - contains.message: "FINE"
-        - contains.message: "TRACE"
+      when:
+        or:
+          - contains:
+              message: "DEBUG"
+          - contains:
+              message: "FINE"
+          - contains:
+              message: "TRACE"
       target: ''
       fields:
         log.level: "DEBUG"
@@ -264,10 +350,14 @@ processors:
   
   # Exception 감지
   - add_fields:
-      when.or:
-        - contains.message: "Exception"
-        - contains.message: "at "
-        - contains.message: "Caused by:"
+      when:
+        or:
+          - contains:
+              message: "Exception"
+          - contains:
+              message: "at "
+          - contains:
+              message: "Caused by:"
       target: ''
       fields:
         error.type: "exception"
@@ -292,9 +382,19 @@ output.kafka:
   # 신뢰성
   required_acks: 1
   max_retries: 3
+  timeout: 30s
   
   # 메타데이터
   client_id: "filebeat-tomcat-windows"
+  
+  # 버전 호환성 (9.x)
+  version: "3.0.0"
+
+# ======================== Queue Settings ========================
+queue.mem:
+  events: 4096
+  flush.min_events: 512
+  flush.timeout: 5s
 
 # ======================== Logging ========================
 logging.level: info
@@ -304,12 +404,21 @@ logging.files:
   name: filebeat
   keepfiles: 7
   permissions: 0640
+  rotateeverybytes: 10485760  # 10MB
 
 # ======================== Monitoring ========================
 monitoring.enabled: true
+monitoring.cluster_uuid: "tomcat-monitoring"
+
 http.enabled: true
-http.host: localhost
+http.host: "0.0.0.0"
 http.port: 5066
+
+# ======================== Filebeat Registry ========================
+filebeat.registry:
+  path: C:\ProgramData\filebeat\registry
+  file_permissions: 0600
+  flush: 5s
 ```
 
 ## 3. Kafka 토픽 생성
@@ -405,20 +514,31 @@ input {
 
 filter {
   # ============ 공통 처리 ============
-  # Filebeat 메타데이터 처리
+  # Filebeat 9.x 메타데이터 처리
   if [agent][type] == "filebeat" {
     mutate {
       add_field => {
         "[@metadata][beat_version]" => "%{[agent][version]}"
         "[@metadata][beat_hostname]" => "%{[agent][hostname]}"
+        "[@metadata][input_id]" => "%{[input][id]}"
+        "[@metadata][filestream_id]" => "%{[log][file][id]}"  # 9.x 파일 ID
       }
     }
   }
   
-  # 타임스탬프 파싱
-  date {
-    match => [ "@timestamp", "ISO8601" ]
-    target => "@timestamp"
+  # ECS 버전 확인 (9.x는 ECS 8.x 사용)
+  if [ecs][version] {
+    mutate {
+      add_field => { "[@metadata][ecs_version]" => "%{[ecs][version]}" }
+    }
+  }
+  
+  # 타임스탬프 파싱 (@timestamp는 Filebeat 9.x에서 자동 설정)
+  if ![timestamp] {
+    date {
+      match => [ "@timestamp", "ISO8601" ]
+      target => "@timestamp"
+    }
   }
   
   # ============ Catalina 로그 처리 ============
@@ -598,9 +718,19 @@ filter {
     }
   }
   
-  # 필드 정리
+  # 필드 정리 (Filebeat 9.x 새로운 필드 포함)
   mutate {
-    remove_field => [ "beat", "prospector", "offset", "source" ]
+    remove_field => [ 
+      "beat", 
+      "prospector", 
+      "offset", 
+      "source", 
+      "input.type", 
+      "[log][offset]",
+      "[log][file][path]",
+      "[log][file][id]",
+      "[event][original]"  # 9.x에서 추가된 대용량 필드
+    ]
   }
 }
 
@@ -657,6 +787,8 @@ output {
 ```json
 {
   "index_patterns": ["tomcat-*"],
+  "priority": 100,
+  "version": 9,
   "settings": {
     "number_of_shards": 3,
     "number_of_replicas": 1,
@@ -664,12 +796,19 @@ output {
     "index.refresh_interval": "5s",
     "index.translog.durability": "async",
     "index.translog.sync_interval": "5s",
-    "index.query.default_field": "message"
+    "index.query.default_field": "message",
+    "index.mapping.total_fields.limit": 2000
   },
   "mappings": {
+    "_source": {
+      "enabled": true
+    },
     "properties": {
       "@timestamp": {
         "type": "date"
+      },
+      "@version": {
+        "type": "keyword"
       },
       "message": {
         "type": "text",
@@ -677,6 +816,63 @@ output {
           "keyword": {
             "type": "keyword",
             "ignore_above": 2048
+          }
+        }
+      },
+      "event": {
+        "properties": {
+          "created": {
+            "type": "date"
+          },
+          "dataset": {
+            "type": "keyword"
+          },
+          "module": {
+            "type": "keyword"
+          },
+          "original": {
+            "type": "text",
+            "index": false,
+            "doc_values": false
+          }
+        }
+      },
+      "input": {
+        "properties": {
+          "id": {
+            "type": "keyword"
+          },
+          "type": {
+            "type": "keyword"
+          }
+        }
+      },
+      "log": {
+        "properties": {
+          "level": {
+            "type": "keyword"
+          },
+          "file": {
+            "properties": {
+              "path": {
+                "type": "keyword"
+              },
+              "id": {
+                "type": "keyword"
+              },
+              "inode": {
+                "type": "keyword"
+              },
+              "device_id": {
+                "type": "keyword"
+              }
+            }
+          },
+          "offset": {
+            "type": "long"
+          },
+          "flags": {
+            "type": "keyword"
           }
         }
       },
@@ -696,8 +892,34 @@ output {
           },
           "environment": {
             "type": "keyword"
+          }
+        }
+      },
+      "agent": {
+        "properties": {
+          "type": {
+            "type": "keyword"
           },
-          "server_name": {
+          "version": {
+            "type": "keyword"
+          },
+          "hostname": {
+            "type": "keyword"
+          },
+          "name": {
+            "type": "keyword"
+          },
+          "id": {
+            "type": "keyword"
+          },
+          "ephemeral_id": {
+            "type": "keyword"
+          }
+        }
+      },
+      "ecs": {
+        "properties": {
+          "version": {
             "type": "keyword"
           }
         }
@@ -710,8 +932,17 @@ output {
           "hostname": {
             "type": "keyword"
           },
+          "id": {
+            "type": "keyword"
+          },
           "ip": {
             "type": "ip"
+          },
+          "mac": {
+            "type": "keyword"
+          },
+          "architecture": {
+            "type": "keyword"
           },
           "os": {
             "properties": {
@@ -719,6 +950,21 @@ output {
                 "type": "keyword"
               },
               "version": {
+                "type": "keyword"
+              },
+              "platform": {
+                "type": "keyword"
+              },
+              "family": {
+                "type": "keyword"
+              },
+              "kernel": {
+                "type": "keyword"
+              },
+              "build": {
+                "type": "keyword"
+              },
+              "type": {
                 "type": "keyword"
               }
             }
@@ -979,8 +1225,17 @@ GET tomcat-*/_search
 Get-Service filebeat
 Get-Content C:\ProgramData\filebeat\logs\filebeat -Tail 20
 
-# Filebeat 메트릭
+# Filebeat 메트릭 (9.x 버전)
 Invoke-RestMethod -Uri "http://localhost:5066/stats" | ConvertTo-Json
+
+# Filebeat 레지스트리 확인 (filestream 상태)
+Get-ChildItem "C:\ProgramData\filebeat\registry\filestream" | ForEach-Object {
+    Write-Host "Registry file: $_"
+    Get-Content $_.FullName | ConvertFrom-Json | Format-List
+}
+
+# Filebeat 9.x 인덱스 상태 확인
+Invoke-RestMethod -Uri "http://localhost:5066/inputs" | ConvertTo-Json
 ```
 
 ```bash
@@ -1036,13 +1291,22 @@ function Get-PipelineStatus {
         $status.LogSizes[$_.Name] = [math]::Round($_.Length / 1MB, 2)
     }
     
-    # Filebeat 처리 상태
+    # Filebeat 처리 상태 (9.x 버전 대응)
     try {
         $stats = Invoke-RestMethod -Uri "http://localhost:5066/stats" -TimeoutSec 2
         $status.FilebeatEvents = @{
-            Active = $stats.filebeat.harvester.running
+            Active = $stats.filebeat.inputs.filestream.harvester.running
             Published = $stats.libbeat.output.events.acked
             Failed = $stats.libbeat.output.events.failed
+            Dropped = $stats.libbeat.output.events.dropped
+            Batches = $stats.libbeat.output.events.batches
+        }
+        # 9.x 추가 메트릭
+        if ($stats.libbeat.output.kafka) {
+            $status.KafkaMetrics = @{
+                PublishedMessages = $stats.libbeat.output.kafka.published_messages
+                FailedPublishes = $stats.libbeat.output.kafka.failed_publishes
+            }
         }
     } catch {
         $status.FilebeatEvents = "Monitoring unavailable"
@@ -1075,29 +1339,64 @@ if ($Continuous) {
 | 문제 | 원인 | 해결 방법 |
 |------|------|----------|
 | **로그가 Elasticsearch에 없음** | Filebeat 설정 오류 | `filebeat test config` 및 `filebeat test output` 실행 |
-| **멀티라인 로그 깨짐** | 패턴 설정 오류 | multiline.pattern 검증, max_lines 증가 |
+| **멀티라인 로그 깨짐** | 패턴 설정 오류 | parsers.multiline.pattern 검증, max_lines 증가 |
 | **Kafka Lag 증가** | Logstash 처리 속도 부족 | consumer_threads 증가, 파티션 수 증가 |
 | **인덱스 크기 과다** | 보존 정책 미설정 | ILM 정책 적용, 오래된 인덱스 삭제 |
-| **스택트레이스 누락** | 멀티라인 제한 | multiline.max_lines 증가 (기본 500 → 2000) |
+| **스택트레이스 누락** | 멀티라인 제한 | parsers.multiline.max_lines 증가 (기본 500 → 2000) |
+| **Filebeat 시작 실패** | 레지스트리 손상 | `C:\ProgramData\filebeat\registry` 삭제 후 재시작 |
+| **Duplicate input ID 에러** | ID 중복 | 각 input의 id 필드가 고유한지 확인 |
+| **Permission denied 에러** | 권한 부족 | 관리자 권한으로 실행, 디렉토리 권한 확인 |
+| **Kafka connection 실패** | 버전 비호환 | output.kafka.version 설정 확인 |
 
 ### 8.2 성능 최적화
 
 ```yaml
-# Filebeat 최적화
+# Filebeat 최적화 (9.x 버전)
 filebeat.inputs:
-- type: log
+- type: filestream
+  id: optimized-input
   # 버퍼 크기 증가
-  harvester_buffer_size: 32768
-  # 배치 크기
-  max_bytes: 20971520  # 20MB
+  buffer_size: 32768
+  # 배치 처리
+  prospector:
+    scanner:
+      check_interval: 30s
+      fingerprint:
+        enabled: false
   # 백프레셔 처리
-  backoff: 1s
-  max_backoff: 10s
+  backoff:
+    init: 1s
+    max: 10s
+  # 파일 읽기 최적화
+  file_identity:
+    native: ~
+  # 메모리 사용 최적화
+  message_max_bytes: 10485760  # 10MB
+
+# 출력 큐 설정 (9.x)
+queue.mem:
+  events: 8192
+  flush.min_events: 1024
+  flush.timeout: 5s
+
+# Disk 큐 사용 (대용량 처리)
+# queue.disk:
+#   max_size: 10GB
+#   path: "C:\\ProgramData\\filebeat\\diskqueue"
+#   segment_size: 128MB
+#   write_ahead: 1MB
+
+# Output 배치 설정
+output.kafka:
+  bulk_max_size: 2048
+  bulk_flush_frequency: 1s
+  worker: 2
 
 # Logstash 최적화
 pipeline.workers: 8
 pipeline.batch.size: 250
 pipeline.batch.delay: 5
+pipeline.ecs_compatibility: v8  # ECS 8.x 호환
 
 # Elasticsearch 최적화
 index.refresh_interval: 30s  # 실시간성이 중요하지 않은 경우
@@ -1172,25 +1471,40 @@ tomcat-host-manager-2024.12.08 → 호스트 매니저 로그
 
 ### 10.3 핵심 설정 체크리스트
 
-- [x] Filebeat: 각 로그 파일별 input 설정
-- [x] Filebeat: 멀티라인 패턴 설정 (스택트레이스)
-- [x] Filebeat: JavaScript 프로세서 제거 (호환성 문제 방지)
+- [x] Filebeat: `filestream` input type 사용 (9.x 필수)
+- [x] Filebeat: 각 input에 고유 ID 설정
+- [x] Filebeat: parsers 블록 내 멀티라인 패턴 설정
+- [x] Filebeat: `file_identity.native` 설정
+- [x] Filebeat: 레지스트리 경로 명시적 설정
+- [x] Filebeat: 데이터 디렉토리 생성 및 권한 설정
+- [x] Kafka: 버전 호환성 설정 (`version: "3.0.0"`)
 - [x] Kafka: 로그 타입별 토픽 생성
-- [x] Logstash: 로그 타입별 파싱 로직
-- [x] Elasticsearch: 인덱스 템플릿 및 ILM 정책
+- [x] Logstash: Filebeat 9.x 메타데이터 필드 처리
+- [x] Logstash: ECS 8.x 호환성 설정
+- [x] Elasticsearch: 인덱스 템플릿 (9.x 필드 추가)
+- [x] Elasticsearch: ILM 정책 설정
 - [x] Kibana: Index Pattern 생성
-- [x] 모니터링: Consumer Lag, 인덱스 크기 확인
+- [x] 모니터링: filestream 메트릭 및 Kafka 메트릭 확인
 
 ## 11. 주의사항 및 트러블슈팅
 
-### 11.1 JavaScript 프로세서 에러 해결
+### 11.1 Filebeat 9.x 호환성 체크리스트
 
-Windows Filebeat에서 JavaScript 프로세서 사용 시 다음과 같은 에러가 발생할 수 있습니다:
-```
-Exiting: error initializing processors: the processor action does not exist. Valid actions: script
-```
+**필수 변경 사항**:
+- ✅ `type: filestream` 사용 (log type은 완전 제거됨)
+- ✅ 각 input에 고유한 `id` 필드 필수
+- ✅ `file_identity.native` 설정 추가
+- ✅ `parsers` 블록 내에 multiline 설정
+- ✅ Kafka 버전 명시 (`version: "3.0.0"`)
+- ✅ 레지스트리 경로 명시적 설정
+- ✅ 권한 설정 (`NT SERVICE\filebeat`)
 
-**해결 방법**: JavaScript 프로세서를 제거하고 조건부 `add_fields` 프로세서로 대체했습니다.
+**제거된 설정**:
+- ❌ `type: log` (더 이상 지원 안 함)
+- ❌ `multiline.*` (최상위 레벨 설정 제거)
+- ❌ `close_inactive`, `close_renamed`, `close_removed` (구조 변경)
+- ❌ `clean_removed` (자동 처리)
+- ❌ `harvester_buffer_size` (buffer_size로 통합)
 
 ### 11.2 설정 검증 명령어
 
@@ -1202,8 +1516,20 @@ cd "C:\Program Files\Filebeat"
 # 출력 연결 테스트
 .\filebeat.exe test output -c filebeat.yml
 
+# 입력 설정 테스트 (9.x 신규)
+.\filebeat.exe test input -c filebeat.yml
+
 # 문제 발생 시 디버그 모드 실행
 .\filebeat.exe -e -c filebeat.yml -d "*"
+
+# Filebeat 9.x 레지스트리 초기화 (필요시)
+Stop-Service filebeat
+Remove-Item -Recurse -Force "C:\ProgramData\filebeat\registry"
+New-Item -ItemType Directory -Path "C:\ProgramData\filebeat\registry\filestream" -Force
+Start-Service filebeat
+
+# 상세 로그 확인
+.\filebeat.exe -e -c filebeat.yml -d "filestream,kafka,publish"
 ```
 
 ### 11.3 최소 설정으로 시작
@@ -1211,24 +1537,54 @@ cd "C:\Program Files\Filebeat"
 문제가 지속되면 최소 설정으로 시작하여 단계적으로 추가:
 
 ```yaml
-# filebeat-minimal.yml
+# filebeat-minimal.yml (9.x 버전)
 filebeat.inputs:
-- type: log
+- type: filestream
+  id: tomcat-catalina-minimal
   enabled: true
   paths:
     - 'C:\Program Files\Apache Software Foundation\Tomcat 9.0\logs\catalina.*.log'
+  
+  file_identity:
+    native: ~
+    
   fields:
     log_type: catalina
-  # 멀티라인 설정 (multiline.type 제거)
-  multiline.pattern: '^\d{2}-[A-Za-z]{3}-\d{4}'
-  multiline.negate: true
-  multiline.match: after
+    
+  parsers:
+    - multiline:
+        type: pattern
+        pattern: '^\d{2}-[A-Za-z]{3}-\d{4}'
+        negate: true
+        match: after
 
 output.kafka:
   hosts: ["192.168.1.101:9092"]
   topic: 'tomcat-catalina'
+  version: "3.0.0"  # Kafka 3.x 호환
+
+# 필수 레지스트리 설정
+filebeat.registry:
+  path: C:\ProgramData\filebeat\registry
 
 logging.level: info
+logging.to_files: true
+logging.files:
+  path: C:\ProgramData\filebeat\logs
 ```
+
+### 11.4 버전별 주요 변경사항
+
+#### Filebeat 9.x 주요 변경사항:
+- `type: log` → `type: filestream` (필수 변경)
+- 각 input에 고유한 `id` 필수
+- `multiline` 설정이 `parsers` 블록 내부로 이동
+- `file_identity.native` 설정 권장
+- `queue.disk` 옵션 추가 (대용량 처리)
+- Kafka 3.x 버전 지원 (`version: "3.0.0"`)
+- ECS 8.x 완전 호환
+- `monitoring.cluster_uuid` 추가
+- 레지스트리 경로 명시적 설정 권장
+- HTTP endpoint 보안 강화 (`http.host: "0.0.0.0"` 가능)
 
 이 구조로 Tomcat의 모든 로그를 체계적으로 수집, 처리, 저장할 수 있습니다.
