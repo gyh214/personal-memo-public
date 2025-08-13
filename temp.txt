@@ -1,20 +1,12 @@
-방법 1: 서비스 컨트롤 매니저 재시작 (권장)# 관리자 권한 PowerShell에서 순서대로 실행
-
-# 1. 레지스트리에서 서비스 삭제
+방법 2: WMI 서비스 재시작# 1. 레지스트리 삭제
 reg delete "HKLM\SYSTEM\CurrentControlSet\Services\filebeat" /f
 
-# 2. 서비스 컨트롤 매니저에 변경사항 알림
-sc.exe triggerinfo filebeat delete 2>$null
+# 2. WMI 서비스 재시작 (서비스 목록 관리)
+Restart-Service winmgmt -Force
 
-# 3. services.msc 창 닫기 (열려있다면)
-Stop-Process -Name mmc -Force -ErrorAction SilentlyContinue
+# 3. 잠시 대기
+Start-Sleep -Seconds 3
 
-# 4. 서비스 목록 캐시 새로고침
-[System.ServiceProcess.ServiceController]::GetServices() | Out-Null
-
-# 5. 5초 대기
-Start-Sleep -Seconds 5
-
-# 6. 새 서비스 설치
+# 4. 재설치
 cd D:\filebeat
 .\install-service-filebeat.ps1
