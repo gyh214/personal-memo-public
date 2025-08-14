@@ -1,13 +1,19 @@
-025-08-13 13:14:22,070 - INFO - 127.0.0.1 - - [13/Aug/2025 13:14:22] "POST /api/ollama/manage-model HTTP/1.1" 200 -
-2025-08-13 13:14:35,050 - INFO - ✅ config_ollama.json 커스텀 설정 로드
-2025-08-13 13:14:35,051 - INFO - 📊 Ollama 설정 로드 완료 - batch_size: 7, max_email_body_chars: 300
-2025-08-13 13:14:35,051 - INFO - 🦙 Ollama 동적 URL 사용: http://localhost:11434
-2025-08-13 13:14:35,052 - DEBUG - Starting new HTTP connection (1): 12.26.204.100:8080
-2025-08-13 13:14:35,179 - DEBUG - http://12.26.204.100:8080 "GET http://localhost:11434/api/tags HTTP/1.1" 403 2252
-2025-08-13 13:14:35,181 - INFO - 127.0.0.1 - - [13/Aug/2025 13:14:35] "POST /api/analyze HTTP/1.1" 400 -
-2025-08-13 13:14:48,313 - INFO - ✅ config_ollama.json 커스텀 설정 로드
-2025-08-13 13:14:48,314 - INFO - 📊 Ollama 설정 로드 완료 - batch_size: 7, max_email_body_chars: 300
-2025-08-13 13:14:48,314 - INFO - 🦙 Ollama 동적 URL 사용: http://localhost:11434
-2025-08-13 13:14:48,316 - DEBUG - Starting new HTTP connection (1): 12.26.204.100:8080
-2025-08-13 13:14:48,421 - DEBUG - http://12.26.204.100:8080 "GET http://localhost:11434/api/tags HTTP/1.1" 403 2252
-2025-08-13 13:14:48,423 - INFO - 127.0.0.1 - - [13/Aug/2025 13:14:48] "POST /api/analyze HTTP/1.1" 400 -
+□ 인증 권한 관리 서비스 기획/설계/운영
+
+- IAM 시스템 개선 프로세스 주도
+
+- IAM 플랫폼의 프로비저닝, 디프로비저닝, 라이프사이클 연동 디자인 리뷰 주도
+
+- IAM 서비스의 일상적인 운영 지원, 문제 해결에 참여
+
+- IAM 아키텍처 설계 및 엔지니어링 산출물 생성 
+
+- 핵심 운영 프로세스 도큐멘테이션 개발 및 유지보수
+
+- 워크플로우 자동화 및 반복 가능한 프로세스 발굴/생성 
+
+- 특권 접근 및 일반 계정에 관한 전략 수립 및 커스텀화/배포 지원 
+
+- 롤 마이닝(role mining) 및 역할 정의 지원
+
+- 
