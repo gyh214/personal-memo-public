@@ -1,33 +1,43 @@
-- 하이볼과 찰떡궁합인 안주 메뉴들을 다양하게 제안드립니다
+Oracle 19c 로그를 /logs 아래로 이동시키기 위한 파라미터 설정표입니다.
 
-## 기똥찬 하이볼 안주 추천
+## DB 파라미터 설정
 
-### 일본식 안주
-- **가라아게** - 바삭한 일본식 닭튀김, 레몬 짜서 먹으면 하이볼의 청량감과 완벽 조화
-- **야키토리** - 닭꼬치 구이, 특히 네기마(파닭꼬치)나 츠쿠네(닭완자)가 훌륭함
-- **에다마메** - 삶은 콩에 굵은소금 뿌린 기본 안주, 깔끔하고 부담없음
-- **타코야키** - 문어볼, 겉바속촉 식감이 하이볼과 환상적
-- **교자** - 군만두, 바삭하게 구워낸 것이 특히 잘 어울림
+| 파라미터명 | 변경값 | 적용범위 | 설명 |
+|---|---|---|---|
+| diagnostic_dest | '/logs' | SPFILE | ADR 루트 (alert log 포함) |
+| audit_file_dest | '/logs/audit' | SPFILE | Audit 로그 디렉토리 |
+| core_dump_dest | '/logs/cdump' | SPFILE | Core dump 파일 |
+| background_dump_dest | '/logs/bdump' | SPFILE | Background process trace |
+| user_dump_dest | '/logs/udump' | SPFILE | User process trace |
 
-### 한식 퓨전
-- **닭똥집 볶음** - 고소하고 쫄깃한 식감, 매콤하게 볶으면 하이볼이 계속 당김
-- **황태채 무침** - 고추장 양념의 달콤매콤함이 하이볼과 균형 맞춤
-- **멸치 땅콩 볶음** - 짭조름하고 고소한 맛이 계속 손이 가게 만듦
-- **김치전** - 바삭하게 부쳐낸 김치전은 하이볼과 환상 조합
-- **떡볶이 튀김** - 떡볶이 떡을 튀겨서 소스에 찍어먹는 신박한 안주
+## Listener 파라미터 설정 (listener.ora)
 
-### 서양식 안주
-- **감자튀김** - 트러플 오일이나 파마산 치즈 뿌린 것 추천
-- **나초** - 치즈, 할라피뇨, 과카몰리 올린 나초
-- **버팔로 윙** - 매콤한 소스의 닭날개, 블루치즈 디핑소스와 함께
-- **피시앤칩스** - 영국식 생선튀김과 감자튀김 조합
-- **칼라마리** - 오징어 링 튀김, 아이올리 소스와 함께
+| 파라미터명 | 변경값 | 설명 |
+|---|---|---|
+| LOG_DIRECTORY_LISTENER | /logs/listener | Listener 로그 디렉토리 |
+| LOG_FILE_LISTENER | listener.log | Listener 로그 파일명 |
+| TRACE_DIRECTORY_LISTENER | /logs/listener/trace | Listener trace 디렉토리 |
+| TRACE_FILE_LISTENER | listener.trc | Listener trace 파일명 |
 
-### 창의적인 조합
-- **스팸 무스비** - 구운 스팸과 밥을 김으로 감싼 하와이안 스타일
-- **치즈볼** - 모짜렐라 치즈를 빵가루 입혀 튀긴 것
-- **베이컨 김치 볶음밥** - 볶음밥을 한입 크기로 만들어 먹기 좋게
-- **고구마 스틱** - 고구마를 스틱 모양으로 잘라 튀기고 시나몬 슈가 뿌림
-- **소세지 플래터** - 다양한 종류의 소세지와 머스타드 조합
+## 실제 로그 저장 위치
 
-**요약: 하이볼에는 튀김류(가라아게, 감자튀김), 구이류(야키토리, 교자), 매콤한 안주(닭똥집, 버팔로윙)가 특히 잘 어울리며, 짭조름하고 기름진 안주가 하이볼의 청량감과 완벽한 밸런스를 만들어냅니다.**
+| 로그 유형 | 저장 경로 |
+|---|---|
+| Alert Log | /logs/diag/rdbms/[DB_NAME]/[INSTANCE_NAME]/trace/alert_[INSTANCE_NAME].log |
+| Audit Log | /logs/audit/*.aud |
+| Listener Log | /logs/listener/listener.log |
+| Core Dump | /logs/cdump/*.dmp |
+| Background Trace | /logs/bdump/*.trc |
+| User Trace | /logs/udump/*.trc |
+
+## SQL 명령어
+
+```sql
+ALTER SYSTEM SET diagnostic_dest='/logs' SCOPE=SPFILE;
+ALTER SYSTEM SET audit_file_dest='/logs/audit' SCOPE=SPFILE;
+ALTER SYSTEM SET core_dump_dest='/logs/cdump' SCOPE=SPFILE;
+ALTER SYSTEM SET background_dump_dest='/logs/bdump' SCOPE=SPFILE;
+ALTER SYSTEM SET user_dump_dest='/logs/udump' SCOPE=SPFILE;
+```
+
+**요약**: 총 5개 DB 파라미터와 4개 Listener 파라미터를 변경하여 모든 Oracle 로그를 /logs 아래로 이동시킬 수 있습니다.
